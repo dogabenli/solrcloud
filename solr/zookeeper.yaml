@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: solr
+spec:
+  ports:
+    - port: 2181
+  clusterIP: None
+  selector:
+    app: zookeeper
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: solr
+spec:
+  serviceName: "zookeeper"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "solr"
+          effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: "workload"
+                    operator: In
+                    values:
+                      - solr
+      initContainers:
+        - name: init-myid
+          image: busybox
+          command:
+            - sh
+            - -c
+            - "echo $(( ${HOSTNAME##*-} + 1 )) > /data/myid"
+          volumeMounts:
+            - name: datadir
+              mountPath: /data
+      containers:
+        - name: zookeeper
+          image: zookeeper:3.7
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOO_SERVERS
+              value: server.1=zookeeper-0.zookeeper.solr.svc.cluster.local:2888:3888;2181 server.2=zookeeper-1.zookeeper.solr.svc.cluster.local:2888:3888;2181 server.3=zookeeper-2.zookeeper.solr.svc.cluster.local:2888:3888;2181
+            - name: ZOO_4LW_COMMANDS_WHITELIST
+              value: "ruok"
+          volumeMounts:
+            - name: datadir
+              mountPath: /data
+            - name: datalogdir
+              mountPath: /datalog
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - echo ruok | nc localhost 2181 | grep imok
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: datadir
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+    - metadata:
+        name: datalogdir
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
